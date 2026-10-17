@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Travel Suite</title>
+<style>
+:root { --bg:#f5f7fa; --card:#fff; --text:#1f2933; --muted:#6b7785; --primary:#2f6fed; --border:#dde3ea; --danger:#d64545; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14181d; --card:#1d232a; --text:#e6ebf0; --muted:#97a3b0; --primary:#6a9bff; --border:#2e3741; --danger:#ff7676; }
+}
+* { box-sizing: border-box; }
+body { margin:0; font-family:system-ui,Arial,sans-serif; background:var(--bg); color:var(--text); }
+header { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--border); }
+header h1 { margin:0; font-size:20px; cursor:pointer; }
+main { max-width:900px; margin:0 auto; padding:16px; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.row input { flex:1; min-width:150px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+.grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+input, select, textarea { width:100%; padding:9px; margin:4px 0; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+textarea { min-height:70px; }
+button { padding:9px 14px; border:0; border-radius:6px; background:var(--primary); color:#fff; font:inherit; cursor:pointer; }
+button.sec { background:transparent; color:var(--primary); border:1px solid var(--primary); }
+button.danger { background:var(--danger); }
+.muted { color:var(--muted); font-size:14px; }
+.place { display:flex; gap:12px; cursor:pointer; }
+.place img, .noimg { width:120px; height:90px; object-fit:cover; border-radius:6px; flex:none; }
+.noimg { background:var(--border); color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:12px; }
+.place h3 { margin:0 0 4px; } .place p { margin:2px 0; }
+.card img.full { width:100%; max-height:260px; object-fit:cover; border-radius:6px; }
+.thumb { cursor:pointer; } .thumb img { width:100%; height:130px; object-fit:cover; border-radius:6px; }
+.rv { border-top:1px solid var(--border); padding:6px 0; font-size:14px; }
+#msg { display:none; position:sticky; top:0; z-index:5; padding:10px 14px; border-radius:6px; margin-bottom:12px; }
+#msg.ok { background:#d9f2e3; color:#124d2a; } #msg.err { background:#fbdcdc; color:#7a1717; }
+</style>
+</head>
+<body>
+<header>
+  <h1 onclick="showHome()">🌏 Travel Suite</h1>
+  <div id="userbox"></div>
+</header>
+<main>
+  <div id="msg"></div>
+  <div id="app"></div>
+</main>
+
+<script>
+let token = localStorage.getItem('token') || '';
+let user = null;
+let cur = null; // dia diem dang xem
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const isGuide = () => user && user.role === 'GUIDE';
+const stars = (n, count) => (n ? '★ ' + n + ' (' + count + ')' : 'Chưa có đánh giá');
+
+function msg(text, bad) {
+  const m = $('msg');
+  m.textContent = text; m.className = bad ? 'err' : 'ok'; m.style.display = text ? 'block' : 'none';
+  if (text) setTimeout(() => { if (m.textContent === text) m.style.display = 'none'; }, 4000);
+}
+async function run(fn) { try { await fn(); } catch (e) { msg(e.message, true); } }
+
+async function api(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  let body = opts.body;
+  if (opts.json) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(opts.json); }
+  const r = await fetch(url, { method: opts.method || 'GET', headers, body });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Lỗi ' + r.status);
+  return data;
+}
+
+// ---------- Đăng nhập / đăng ký / đăng xuất ----------
+function renderHeader() {
+  $('userbox').innerHTML = user
+    ? `Xin chào <b>${esc(user.username)}</b> (${user.role === 'GUIDE' ? 'Guide' : 'Traveler'}) <button class="sec" onclick="logout()">Đăng xuất</button>`
+    : `<button onclick="showAuth()">Đăng nhập / Đăng ký</button>`;
+}
+
+function showAuth() {
+  $('app').innerHTML = `<div class="grid2">
+    <div class="card"><h2>Đăng nhập</h2>
+      <input id="lu" placeholder="Tên đăng nhập"><input id="lp" type="password" placeholder="Mật khẩu" onkeydown="if(event.key==='Enter')login()">
+      <button onclick="login()">Đăng nhập</button></div>
+    <div class="card"><h2>Đăng ký</h2>
+      <input id="ru" placeholder="Tên đăng nhập (3-30 ký tự: chữ, số, _)"><input id="re" type="email" placeholder="Email">
+      <input id="rp" type="password" placeholder="Mật khẩu (từ 6 ký tự)">
+      <select id="rr"><option value="TRAVELER">Traveler (du khách)</option><option value="GUIDE">Guide (hướng dẫn viên)</option></select>
+      <button onclick="register()">Đăng ký</button></div></div>`;
+}
+
+function login() {
+  return run(async () => {
+    const r = await api('/api/auth/login', { method: 'POST', json: { username: $('lu').value, password: $('lp').value } });
+    token = r.token; localStorage.setItem('token', token); user = r.user;
+    renderHeader(); showHome(); msg('Đăng nhập thành công');
+  });
+}
+function register() {
+  return run(async () => {
+    await api('/api/auth/register', { method: 'POST', json: { username: $('ru').value, email: $('re').value, password: $('rp').value, role: $('rr').value } });
+    $('lu').value = $('ru').value;
+    msg('Đăng ký thành công, hãy đăng nhập ở khung bên cạnh');
+  });
+}
+async function logout() {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* token hết hạn cũng coi như đã đăng xuất */ }
+  token = ''; user = null; localStorage.removeItem('token');
+  renderHeader(); showHome(); msg('Đã đăng xuất');
+}
+
+// ---------- Trang chủ: danh sách + tìm kiếm ----------
+function placeCard(p) {
+  return `<div class="card place" onclick="showPlace(${p.id})">
+    ${p.cover ? `<img src="/uploads/${esc(p.cover)}" alt="">` : '<div class="noimg">Chưa có ảnh</div>'}
+    <div><h3>${esc(p.name)}</h3><p class="muted">${esc(p.location)} · Guide: ${esc(p.guide)}</p><p>${esc((p.description || '').slice(0, 120))}</p></div></div>`;
+}
+
+async function showHome(q = '', mine = false) {
+  let h = `<div class="card row"><input id="q" placeholder="Tìm địa điểm, ảnh, thông tin..." value="${esc(q)}" onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">Tìm</button>${isGuide() ? `<button class="sec" onclick="showHome('', true)">Địa điểm của tôi</button>` : ''}</div>`;
+  if (isGuide()) {
+    h += `<div class="card"><h3>Thêm địa điểm mới</h3><input id="np" placeholder="Tên địa điểm"><input id="nl" placeholder="Vị trí (tỉnh/thành, địa chỉ)">
+      <textarea id="nd" placeholder="Mô tả"></textarea><button onclick="addPlace()">Thêm địa điểm</button></div>`;
+  }
+  try {
+    if (q) {
+      const r = await api('/api/search?q=' + encodeURIComponent(q));
+      h += `<h2>Kết quả cho "${esc(q)}"</h2><h3>Địa điểm (${r.places.length})</h3>` + (r.places.map(placeCard).join('') || '<p class="muted">Không có</p>');
+      h += `<h3>Ảnh (${r.images.length})</h3><div class="grid">` + r.images.map((i) =>
+        `<div class="card thumb" onclick="showPlace(${i.place_id})"><img src="/uploads/${esc(i.file_path)}" alt=""><p>${esc(i.caption)}</p><p class="muted">${esc(i.place_name)}</p></div>`).join('') + '</div>';
+      h += `<h3>Thông tin (${r.infos.length})</h3>` + r.infos.map((i) =>
+        `<div class="card thumb" onclick="showPlace(${i.place_id})"><b>${esc(i.title)}</b> <span class="muted">· ${esc(i.place_name)}</span><p>${esc(i.content.slice(0, 150))}</p></div>`).join('');
+    } else {
+      const list = await api('/api/places' + (mine ? '?mine=1' : ''));
+      h += `<h2>${mine ? 'Địa điểm của tôi' : 'Tất cả địa điểm'}</h2>` + (list.map(placeCard).join('') || '<p class="muted">Chưa có địa điểm nào</p>');
+    }
+  } catch (e) { msg(e.message, true); }
+  $('app').innerHTML = h;
+}
+const doSearch = () => showHome($('q').value.trim());
+
+function addPlace() {
+  return run(async () => {
+    const r = await api('/api/places', { method: 'POST', json: { name: $('np').value, location: $('nl').value, description: $('nd').value } });
+    msg('Đã thêm địa điểm'); showPlace(r.id);
+  });
+}
+
+// ---------- Chi tiết địa điểm ----------
+function imageCard(i, own) {
+  return `<div class="card"><img class="full" src="/uploads/${esc(i.file_path)}" alt="">
+    <p>${esc(i.caption)}</p><p class="muted">${stars(i.avg_rating, i.review_count)}</p>
+    <div class="row"><button class="sec" onclick="toggleReviews('image',${i.id})">Đánh giá</button>
+    ${own ? `<button class="sec" onclick="editCaption(${i.id})">Sửa chú thích</button><button class="danger" onclick="delItem('images',${i.id})">Xóa</button>` : ''}</div>
+    <div id="rv-image-${i.id}"></div></div>`;
+}
+function infoCard(n, own) {
+  return `<div class="card"><h3>${esc(n.title)}</h3><p>${esc(n.content).replace(/\n/g, '<br>')}</p><p class="muted">${stars(n.avg_rating, n.review_count)}</p>
+    <div class="row"><button class="sec" onclick="toggleReviews('info',${n.id})">Đánh giá</button>
+    ${own ? `<button class="sec" onclick="editInfo(${n.id})">Sửa</button><button class="danger" onclick="delItem('infos',${n.id})">Xóa</button>` : ''}</div>
+    <div id="rv-info-${n.id}"></div></div>`;
+}
+
+async function showPlace(id) {
+  await run(async () => {
+    const p = await api('/api/places/' + id);
+    cur = p;
+    const own = isGuide() && user.id === p.guide_id;
+    let h = `<button class="sec" onclick="showHome()">← Quay lại</button>
+      <div class="card"><h2>${esc(p.name)}</h2><p class="muted">${esc(p.location)} · Guide: ${esc(p.guide)}</p><p>${esc(p.description).replace(/\n/g, '<br>')}</p>`;
+    if (own) {
+      h += `<details><summary>Sửa / xóa địa điểm</summary><input id="pn" value="${esc(p.name)}"><input id="pl" value="${esc(p.location)}">
+        <textarea id="pd">${esc(p.description)}</textarea><div class="row"><button onclick="savePlace()">Lưu</button><button class="danger" onclick="delPlace()">Xóa địa điểm</button></div></details>`;
+    }
+    h += `</div><h2>Ảnh (${p.images.length})</h2>`;
+    if (own) h += `<div class="card"><input type="file" id="file" accept="image/*"><input id="cap" placeholder="Chú thích ảnh"><button onclick="upload()">Tải ảnh lên</button></div>`;
+    h += `<div class="grid">${p.images.map((i) => imageCard(i, own)).join('')}</div><h2>Thông tin (${p.infos.length})</h2>`;
+    if (own) h += `<div class="card"><input id="it" placeholder="Tiêu đề"><textarea id="ic" placeholder="Nội dung"></textarea><button onclick="addInfo()">Thêm thông tin</button></div>`;
+    h += p.infos.map((n) => infoCard(n, own)).join('');
+    $('app').innerHTML = h;
+    window.scrollTo(0, 0);
+  });
+}
+
+// ---------- Guide: CRUD ----------
+const savePlace = () => run(async () => {
+  await api('/api/places/' + cur.id, { method: 'PUT', json: { name: $('pn').value, location: $('pl').value, description: $('pd').value } });
+  msg('Đã lưu'); showPlace(cur.id);
+});
+const delPlace = () => run(async () => {
+  if (!confirm('Xóa địa điểm này cùng toàn bộ ảnh và thông tin?')) return;
+  await api('/api/places/' + cur.id, { method: 'DELETE' });
+  msg('Đã xóa địa điểm'); showHome();
+});
+const upload = () => run(async () => {
+  const f = $('file').files[0];
+  if (!f) throw new Error('Hãy chọn một ảnh');
+  await api(`/api/places/${cur.id}/images?caption=${encodeURIComponent($('cap').value)}`, { method: 'POST', body: f, headers: { 'Content-Type': f.type || 'application/octet-stream' } });
+  msg('Đã tải ảnh lên'); showPlace(cur.id);
+});
+const editCaption = (id) => run(async () => {
+  const c = prompt('Chú thích mới:', cur.images.find((i) => i.id === id).caption || '');
+  if (c === null) return;
+  await api('/api/images/' + id, { method: 'PUT', json: { caption: c } });
+  msg('Đã sửa'); showPlace(cur.id);
+});
+const addInfo = () => run(async () => {
+  await api(`/api/places/${cur.id}/infos`, { method: 'POST', json: { title: $('it').value, content: $('ic').value } });
+  msg('Đã thêm thông tin'); showPlace(cur.id);
+});
+const editInfo = (id) => run(async () => {
+  const old = cur.infos.find((n) => n.id === id);
+  const title = prompt('Tiêu đề:', old.title);
+  if (title === null) return;
+  const content = prompt('Nội dung:', old.content);
+  if (content === null) return;
+  await api('/api/infos/' + id, { method: 'PUT', json: { title, content } });
+  msg('Đã sửa'); showPlace(cur.id);
+});
+const delItem = (kind, id) => run(async () => {
+  if (!confirm('Bạn chắc chắn muốn xóa?')) return;
+  await api(`/api/${kind}/${id}`, { method: 'DELETE' });
+  msg('Đã xóa'); showPlace(cur.id);
+});
+
+// ---------- Traveler: đánh giá + bình luận ----------
+async function loadReviews(type, id) {
+  const list = await api(`/api/${type}s/${id}/reviews`);
+  let h = list.map((r) => `<div class="rv"><b>${esc(r.username)}</b> ★${r.rating}<br>${esc(r.comment)}</div>`).join('') || '<p class="muted">Chưa có đánh giá</p>';
+  if (user && user.role === 'TRAVELER') {
+    h += `<select id="rs-${type}-${id}">${[5, 4, 3, 2, 1].map((n) => `<option value="${n}">${n} sao</option>`).join('')}</select>
+      <textarea id="rc-${type}-${id}" placeholder="Bình luận của bạn"></textarea><button onclick="sendReview('${type}',${id})">Gửi đánh giá</button>`;
+  } else if (!user) {
+    h += '<p class="muted">Hãy đăng nhập bằng tài khoản Traveler để đánh giá.</p>';
+  }
+  $(`rv-${type}-${id}`).innerHTML = h;
+}
+const toggleReviews = (type, id) => run(async () => {
+  const el = $(`rv-${type}-${id}`);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  await loadReviews(type, id);
+});
+const sendReview = (type, id) => run(async () => {
+  await api(`/api/${type}s/${id}/reviews`, { method: 'POST', json: { rating: $(`rs-${type}-${id}`).value, comment: $(`rc-${type}-${id}`).value } });
+  msg('Đã gửi đánh giá');
+  await showPlace(cur.id);
+  await loadReviews(type, id);
+});
+
+// ---------- Khởi động ----------
+(async function init() {
+  if (token) {
+    try { user = await api('/api/me'); } catch (e) { token = ''; localStorage.removeItem('token'); }
+  }
+  renderHeader();
+  showHome();
+})();
+</script>
+</body>
+</html>

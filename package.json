@@ -1,0 +1,12 @@
+{
+  "name": "asm-travel-suite",
+  "version": "1.0.0",
+  "description": "Travel Suite - web service (REST API) va web client chia se thong tin du lich",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=22.13" },
+  "license": "UNLICENSED"
+}
